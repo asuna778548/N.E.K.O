@@ -83,14 +83,15 @@ class SpeechOutputController:
         speech_id: str,
         text: str,
         *,
-        on_event: Optional[Callable[[PlaybackEvent], None]] = None,
         on_timeline: Optional[Callable[[CaptionTimeline], None]] = None,
         on_failure: Optional[Callable[[SpeechFailure], None]] = None,
+        on_pcm: Optional[Callable[[bytes], None]] = None,
     ) -> None:
         """Synthesize one utterance and feed PCM into the unique sink.
 
-        Cancellation is cooperative: if ``cancel(speech_id)`` is called while
-        this coroutine runs, the pending sentence loop drops immediately.
+        Playback/failure events always flow through the sink's own ``on_event``
+        / the ``on_failure`` hook; this method adds the caption-timeline and
+        raw-PCM hooks only.
         """
         self.stats.speeches += 1
         if speech_id in self._active:
@@ -98,14 +99,6 @@ class SpeechOutputController:
         utterance = self.chunker.chunk(speech_id, text)
 
         self.sink.begin(speech_id, self.sample_rate)
-
-        def _wrap_event(ev: PlaybackEvent) -> None:
-            if on_event is not None:
-                on_event(ev)
-
-        # No-op wrapper keeps the signature stable; events also flow through
-        # the sink's own on_event (registered at sink construction).
-        del _wrap_event
 
         self._active.add(speech_id)
         try:
@@ -122,6 +115,8 @@ class SpeechOutputController:
                         return
                     self.sink.feed(speech_id, chunk)
                     self.stats.pcm_samples += len(chunk) // 2
+                    if on_pcm is not None:
+                        on_pcm(chunk)
                 end_sample = self.sink.total_emitted(speech_id)
                 segments.append(
                     CaptionSegment(

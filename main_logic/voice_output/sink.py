@@ -220,6 +220,8 @@ class UniqueAudioSink:
         self._threads[stream.speech_id] = thread
         thread.start()
 
+    TICK_PLAY_SAMPLES = 960  # one ~20ms @48k pacing quantum between cursor emissions
+
     def _pace_loop(self, stream: _SpeechStream) -> None:
         started_real = self.clock.monotonic_ns()
         self._emit(stream, PlaybackState.STARTED)
@@ -244,20 +246,42 @@ class UniqueAudioSink:
                     self._threads.pop(stream.speech_id, None)
                     return
                 chunk = stream.queue.pop(0) if stream.queue else None
-            if chunk is None:
-                self.clock.sleep_ms(2)
-                continue
-            samples = len(chunk) // 2
-            with self._lock:
-                stream.state = PlaybackState.PLAYING
-                stream.played_samples += samples
-                played = stream.played_samples
-            self._emit(stream, PlaybackState.PLAYING, played_samples=played)
-            target_ns = started_real + int(played / stream.sample_rate * 1e9)
-            now = self.clock.monotonic_ns()
-            remain_ms = (target_ns - now) / 1e6
-            if remain_ms > 0.5:
-                self.clock.sleep_ms(min(remain_ms, 10.0))
+                if chunk is None:
+                    self.clock.sleep_ms(2)
+                    continue
+                chunk_samples = len(chunk) // 2
+            # Play this chunk's samples through the real-time cursor in
+            # ~20ms quanta. Pacing is anchored to the wall time this chunk
+            # actually STARTED playing (not the stream start): if audio
+            # arrived late (first-token / sentence boundary), the cursor must
+            # not race ahead of the wall clock to make up for the silence.
+            chunk_play_start_ns = self.clock.monotonic_ns()
+            chunk_start_played = stream.played_samples
+            played = stream.played_samples
+            remaining = chunk_samples
+            while remaining > 0:
+                with self._lock:
+                    if stream.state in (PlaybackState.CANCELLED, PlaybackState.INTERRUPTED, PlaybackState.FAILED):
+                        break
+                    step = min(remaining, self.TICK_PLAY_SAMPLES)
+                    stream.state = PlaybackState.PLAYING
+                    stream.played_samples += step
+                    played = stream.played_samples
+                remaining -= step
+                # Fully pace the claimed quantum BEFORE reporting the new
+                # position, in <=10ms slices so cancel stays observable.
+                now = self.clock.monotonic_ns()
+                delta_played = played - chunk_start_played
+                target_ns = chunk_play_start_ns + int(delta_played / stream.sample_rate * 1e9)
+                remain_ms = (target_ns - now) / 1e6
+                while remain_ms > 0.5:
+                    self.clock.sleep_ms(min(remain_ms, 10.0))
+                    with self._lock:
+                        if stream.state in (PlaybackState.CANCELLED, PlaybackState.INTERRUPTED, PlaybackState.FAILED):
+                            break
+                    now = self.clock.monotonic_ns()
+                    remain_ms = (target_ns - now) / 1e6
+                self._emit(stream, PlaybackState.PLAYING, played_samples=played)
 
     # ── emission ─────────────────────────────────────────────────────────────
 
