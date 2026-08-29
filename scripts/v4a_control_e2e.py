@@ -218,6 +218,7 @@ async def main() -> int:
             press_ns = time.monotonic_ns()
             first_ms = await feed_frames(pipeline.broker, conv_chunks)
             press_to_first.append(first_ms)
+            print(f"[ctrl] turn {i}: fed {len(conv_chunks)} chunks, broker frames_captured={pipeline.broker.metrics.frames_captured}", flush=True)
             released = await godot.release("mouse4")
             released_ns = released["released_ns"]
             events = await godot.collect_until_final(turn_id)
@@ -240,7 +241,9 @@ async def main() -> int:
                 {
                     "side": "mouse4",
                     "voice_turn_id": turn_id,
-                    "final_transcript": final_event.get("text"),
+                    "final_transcript": final_event.get(
+                        "final_transcript", final_event.get("text", "")
+                    ),
                     "partial_seen_before_final": partial_seen[turn_id],
                     "release_to_final_ms": round(final_ms, 1),
                     "press_to_first_frame_ms": round(first_ms, 3),
@@ -249,7 +252,7 @@ async def main() -> int:
             print(
                 f"[ctrl] turn {i}: release->final {final_ms:.0f}ms "
                 f"partial_seen={partial_seen[turn_id]} "
-                f"final={final_event.get('text')!r}",
+                f"final={final_event.get('final_transcript', final_event.get('text', ''))!r}",
                 flush=True,
             )
 
@@ -277,7 +280,9 @@ async def main() -> int:
                 {
                     "side": "mouse5",
                     "voice_turn_id": turn_id,
-                    "final_transcript": final_event.get("text"),
+                    "final_transcript": final_event.get(
+                        "final_transcript", final_event.get("text", "")
+                    ),
                     "partial_seen_before_final": partial_seen[turn_id],
                     "release_to_final_ms": round(final_ms, 1),
                     "press_to_first_frame_ms": round(first_ms, 3),

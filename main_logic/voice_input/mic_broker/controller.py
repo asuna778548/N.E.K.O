@@ -32,6 +32,11 @@ class WorkerPipeline:
     broker: MicBroker = field(init=False)
     bridge: PttVoiceInputBridge = field(init=False)
 
+    async def _noop_cue(self, _cue: str, _side: PttSide, _voice_turn_id: str) -> None:
+        """Expression/presentation cues belong to the output stack (V4-B). The
+        input chain only surfaces them as events; a noop keeps the bridge
+        press/release lifecycle working when no cue consumer is wired yet."""
+
     def __post_init__(self) -> None:
         if self.capture_factory is None:
             from .capture import SoundDeviceCapture  # noqa: PLC0415
@@ -52,7 +57,7 @@ class WorkerPipeline:
             on_conversation_final=None,  # type: ignore[arg-type]
             on_action_final=None,  # type: ignore[arg-type]
             on_partial_display=None,  # type: ignore[arg-type]
-            on_cue=None,  # type: ignore[arg-type]
+            on_cue=self._noop_cue,  # type: ignore[arg-type]
             on_error=None,  # type: ignore[arg-type]
         )
         # Production wiring identical to the E2E driver: the bridge is the one
