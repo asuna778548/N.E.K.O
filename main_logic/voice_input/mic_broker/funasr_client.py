@@ -56,6 +56,7 @@ class FunasrClientMetrics:
     errors_received: int = 0
     reconnects: int = 0
     send_failures: int = 0
+    malformed_downstream: int = 0
 
 
 @dataclass(slots=True)
@@ -241,6 +242,17 @@ class FunasrWorkerClient:
     async def _dispatch(self, message: dict[str, Any]) -> None:
         message_type = message.get("type")
         voice_turn_id = message.get("voice_turn_id")
+        if message_type in ("asr.partial", "asr.final"):
+            # Downstream shape contract (proposal voice-streaming v1): a
+            # partial must never carry final=True and both carry
+            # asr_profile_id; anything else is dropped, never routed.
+            if (message_type == "asr.partial" and message.get("final") is True) or (
+                message_type == "asr.final"
+                and (message.get("final") is not True or message.get("asr_profile_id") is None)
+            ):
+                self.client_metrics.malformed_downstream += 1
+                logger.warning("malformed downstream %r dropped", message_type)
+                return
         if message_type == "asr.partial":
             self.client_metrics.partials_received += 1
             await self.on_partial(

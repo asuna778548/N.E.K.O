@@ -105,6 +105,7 @@ async def test_downstream_partial_and_final_dispatch() -> None:
                 "voice_turn_id": "t1",
                 "asr_profile_id": "conversation.zh",
                 "text": "白蚀",
+                "final": False,
                 "monotonic_ns": 5,
             }
         ),
@@ -114,6 +115,7 @@ async def test_downstream_partial_and_final_dispatch() -> None:
                 "voice_turn_id": "t1",
                 "asr_profile_id": "conversation.zh",
                 "text": "白蚀，你怎么看",
+                "final": True,
                 "monotonic_ns": 6,
             }
         ),
@@ -147,6 +149,32 @@ async def test_worker_error_is_surfaced() -> None:
         await __import__("asyncio").sleep(0.01)
     await client.close()
     assert callbacks.errors == [(None, "FUNASR_MODEL_LOAD_FAILED", "offline model missing")]
+
+
+async def test_partial_carrying_final_flag_is_dropped_never_routed() -> None:
+    """Protocol violation on the wire must be dropped, not upgraded to a final."""
+    transport = FakeWsTransport()
+    transport.incoming = [
+        json.dumps(
+            {
+                "type": "asr.partial",
+                "voice_turn_id": "t1",
+                "asr_profile_id": "conversation.zh",
+                "text": "白蚀",
+                "final": True,
+                "monotonic_ns": 5,
+            }
+        )
+    ]
+    client, callbacks = _client(transport)
+    for _ in range(50):
+        if client.client_metrics.malformed_downstream == 1:
+            break
+        await __import__("asyncio").sleep(0.01)
+    await client.close()
+    assert callbacks.partials == []
+    assert callbacks.finals == []
+    assert client.client_metrics.malformed_downstream == 1
 
 
 async def test_cancel_message_shape() -> None:
