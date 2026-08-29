@@ -80,7 +80,10 @@ async def test_upstream_messages_carry_contract_fields() -> None:
     descriptor = _descriptor()
     client.begin_turn(descriptor, "session-1")
     client.queue_frame(descriptor, b"\x01\x02", 456)
-    client.seal_turn(descriptor, b"\x03\x04", 789)
+    # The ring tail is the full press-to-release capture: the already
+    # live-streamed prefix (2 bytes) plus 2 bytes that live streaming missed.
+    # seal_turn must forward only the not-yet-streamed remainder.
+    client.seal_turn(descriptor, b"\x01\x02\x03\x04", 789)
     await client.close()
 
     types = [json.loads(raw)["type"] for raw in transport.sent]
@@ -92,7 +95,10 @@ async def test_upstream_messages_carry_contract_fields() -> None:
     assert begin["client_session_id"] == "session-1"
     frame = json.loads(transport.sent[1])
     assert frame["voice_turn_id"] == "t1"
-    # seal_turn flushed the tail as a frame before voice.end
+    assert frame["pcm16_base64"] == "AQI="  # the live-streamed frame
+    tail_frame = json.loads(transport.sent[2])
+    assert tail_frame["pcm16_base64"] == "AwQ="  # only the missed remainder
+    # seal_turn flushed the tail remainder as a frame before voice.end
     assert json.loads(transport.sent[3])["released_monotonic_ns"] == 789
 
 

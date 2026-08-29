@@ -75,6 +75,7 @@ class FunasrWorkerClient:
     _loop: asyncio.AbstractEventLoop | None = None
     _loop_thread_id: int | None = None
     _closed: bool = False
+    _live_bytes_by_turn: dict[str, int] = field(default_factory=dict, init=False)
     client_metrics: FunasrClientMetrics = field(
         default_factory=FunasrClientMetrics, init=False
     )
@@ -135,6 +136,9 @@ class FunasrWorkerClient:
     def queue_frame(
         self, descriptor: MicTurnDescriptor, pcm16: bytes, monotonic_ns: int
     ) -> None:
+        self._live_bytes_by_turn[descriptor.voice_turn_id] = (
+            self._live_bytes_by_turn.get(descriptor.voice_turn_id, 0) + len(pcm16)
+        )
         self._enqueue(
             "audio.frame",
             descriptor,
@@ -146,8 +150,15 @@ class FunasrWorkerClient:
     def seal_turn(
         self, descriptor: MicTurnDescriptor, pcm_tail: bytes, released_monotonic_ns: int
     ) -> None:
-        if pcm_tail:
-            self.queue_frame(descriptor, pcm_tail, released_monotonic_ns)
+        # The ring tail is the reliable full press-to-release capture. Frames
+        # were already live-streamed via queue_frame; only forward the part of
+        # the tail that live streaming did not cover, so the offline final sees
+        # exactly once all audio and never a duplicated utterance.
+        live = self._live_bytes_by_turn.get(descriptor.voice_turn_id, 0)
+        remaining = pcm_tail[live:] if live < len(pcm_tail) else b""
+        self._live_bytes_by_turn.pop(descriptor.voice_turn_id, None)
+        if remaining:
+            self.queue_frame(descriptor, remaining, released_monotonic_ns)
         self._enqueue(
             "voice.end",
             descriptor,
