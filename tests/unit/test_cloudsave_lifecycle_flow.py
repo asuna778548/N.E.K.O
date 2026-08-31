@@ -368,6 +368,13 @@ async def test_main_server_manual_startup_performs_fallback_import_and_continues
         mock_set_steamworks = stack.enter_context(
             patch("main_routers.shared_state.set_steamworks", Mock())
         )
+        # 隔离进程级蒸汽柄残留：on_startup 的 init_shared_state(steamworks=...) 直接
+        # 读 app.main_server 模块全局 steamworks（line 311 初始 None，仅
+        # ensure_steamworks_initialized 重试写入真实句柄，本机 Steam 可用时非 None）。
+        # 只 patch setter 不封读源，第二次 set_steamworks 会收到前序残留的真实句柄。
+        # 这里把模块全局读取源钉为 None，使本用例对任何前序共享状态免疫。
+        # （对照实验：无此补丁时 seed=20260731 序下本用例确定性失败，与本批清点一致。）
+        stack.enter_context(patch.object(main_server, "steamworks", None))
         stack.enter_context(patch("utils.token_tracker.install_hooks", Mock()))
         stack.enter_context(
             patch("utils.token_tracker.TokenTracker.get_instance", return_value=fake_tracker)
@@ -412,6 +419,7 @@ async def test_main_server_shutdown_does_not_reexport_runtime_into_cloudsave_sna
     with patch.object(main_server, "_IS_MAIN_PROCESS", True), \
          patch.object(main_server, "_preload_task", None), \
          patch.object(main_server, "agent_event_bridge", None), \
+         patch.object(main_server, "steamworks", None), \
          patch.object(main_server.character_runtime, "role_state", _role_state_from_session_managers({})), \
          patch.object(main_server, "_run_cloudsave_manager_action", AsyncMock()) as run_cloudsave_action, \
          patch("utils.music_crawlers.close_all_crawlers", AsyncMock(return_value=None)), \
