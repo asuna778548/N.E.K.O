@@ -3402,7 +3402,7 @@ def test_every_bounded_wait_is_measured_or_says_why_not():
 
     source = Path(
         "main_logic/omni_realtime_client/_response_arbiter.py"
-    ).read_text()
+    ).read_text(encoding="utf-8")
     lines = source.splitlines()
     unmeasured = []
     for index, line in enumerate(lines, 1):
